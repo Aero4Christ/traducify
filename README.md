@@ -103,7 +103,7 @@ Microphone ──AVAudioEngine───┘                                      
 ## Roadmap
 
 - Movable / repositionable panel
-- App icon and notarized builds
+- Notarized builds
 - Text-to-speech for chat translations
 - Intel Mac builds
 - Companion mobile app (point your phone at the TV)
