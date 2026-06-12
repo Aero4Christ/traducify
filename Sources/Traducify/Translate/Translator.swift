@@ -12,6 +12,19 @@ struct Translator {
         var errorDescription: String? { message }
     }
 
+    /// Forgiving endpoint builder: tolerates trailing slashes, a pasted
+    /// /chat/completions suffix, and a bare host with no /v1 path.
+    private var endpoint: URL? {
+        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while base.hasSuffix("/") { base.removeLast() }
+        if base.lowercased().hasSuffix("/chat/completions") {
+            base.removeLast("/chat/completions".count)
+        }
+        guard !base.isEmpty, let probe = URL(string: base), probe.host != nil else { return nil }
+        if probe.path.isEmpty || probe.path == "/" { base += "/v1" }
+        return URL(string: base + "/chat/completions")
+    }
+
     /// Returns (translation, model that produced it). Walks the fallback chain.
     func translate(_ text: String, from: String, to: String) async throws -> (String, String) {
         var lastError = "no models configured"
@@ -36,8 +49,8 @@ struct Translator {
         output it unchanged.
         """
 
-        var req = URLRequest(url: URL(string: baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                                      + "/chat/completions")!)
+        guard let endpoint else { throw Failure(message: "invalid base URL: \(baseURL)") }
+        var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.timeoutInterval = 30
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -58,6 +71,12 @@ struct Translator {
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw Failure(message: "no response") }
         guard http.statusCode == 200 else {
+            // surface the provider's own explanation, not a JSON blob
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let message = err["message"] as? String {
+                throw Failure(message: "HTTP \(http.statusCode): \(message)")
+            }
             let snippet = String(data: data.prefix(200), encoding: .utf8) ?? ""
             throw Failure(message: "HTTP \(http.statusCode) \(snippet)")
         }

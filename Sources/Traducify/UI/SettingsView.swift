@@ -48,6 +48,13 @@ struct SettingsView: View {
                     Text("Any OpenAI-compatible endpoint works: OpenRouter, OpenAI, Groq, a local server…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if state.config.baseURL != "https://openrouter.ai/api/v1",
+                       state.config.customModel.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Label("Custom provider needs a model name. The default fallback chain only exists on OpenRouter, so without one every request will fail (usually a 404).",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
             }
 
