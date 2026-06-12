@@ -32,16 +32,23 @@ struct Translator {
 
     /// Returns (translation, model that produced it).
     func translate(_ text: String, from: String, to: String) async throws -> (String, String) {
-        var lastError = "no models configured"
+        var failures: [String] = []
         for attempt in attempts where !attempt.model.isEmpty {
             do {
                 let result = try await request(text, from: from, to: to, attempt: attempt)
                 if !result.isEmpty { return (result, attempt.model) }
             } catch {
-                lastError = "\(attempt.model): \(error.localizedDescription)"
+                failures.append("\(attempt.model): \(error.localizedDescription)")
             }
         }
-        throw Failure(message: lastError)
+        switch failures.count {
+        case 0: throw Failure(message: "no models configured")
+        case 1: throw Failure(message: failures[0])
+        default:
+            // the first failure is usually the actionable one (key/credits);
+            // the last is just where the chain ran out
+            throw Failure(message: "all \(failures.count) models failed. First: \(failures.first!)")
+        }
     }
 
     private func request(_ text: String, from: String, to: String, attempt: Attempt) async throws -> String {
