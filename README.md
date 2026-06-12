@@ -52,6 +52,10 @@ Transcripts (when enabled) are saved to `~/Documents/Traducify/` as Markdown, on
 - If it clips the start of sentences, lower the sensitivity slider (more negative = more sensitive) in Settings.
 - The collapsed ticker is great for movies: one quiet line at the top of the screen.
 
+## Premium model (optional)
+
+Settings → Translator → "Premium model". Give it a base URL, a model, and its own API key, and every translation tries it first, with the regular chain as the automatic fallback. Typical setup: an OpenAI key + `gpt-5.5` for quality, OpenRouter free models as the safety net when credits run out.
+
 ## Bring your own provider (Advanced)
 
 Settings → Translator → Advanced. Set any OpenAI-compatible base URL and model, for example:
