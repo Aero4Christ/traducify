@@ -2,11 +2,11 @@ import Foundation
 import Security
 
 /// API key storage. Plain files are how keys end up in screenshots and repos.
+/// Accounts: "api-key" (main provider), "premium-api-key" (premium slot).
 enum Keychain {
     private static let service = "com.aero4christ.traducify"
-    private static let account = "api-key"
 
-    static func saveKey(_ key: String) {
+    static func saveKey(_ key: String, account: String = "api-key") {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -19,7 +19,7 @@ enum Keychain {
         SecItemAdd(add as CFDictionary, nil)
     }
 
-    static func loadKey() -> String {
+    static func loadKey(account: String = "api-key") -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

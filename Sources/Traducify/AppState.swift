@@ -36,6 +36,7 @@ final class AppState: ObservableObject {
     @Published var showChat = false
     @Published var config = Config.load()
     @Published var apiKeyDraft = ""
+    @Published var premiumKeyDraft = ""
 
     var onOpenSettings: (() -> Void)?
 
@@ -51,14 +52,27 @@ final class AppState: ObservableObject {
     }
 
     private var translator: Translator {
+        var attempts: [Translator.Attempt] = []
+        let premiumModel = config.premiumModel.trimmingCharacters(in: .whitespaces)
+        if !premiumModel.isEmpty {
+            attempts.append(Translator.Attempt(
+                baseURL: config.premiumBaseURL,
+                apiKey: Keychain.loadKey(account: "premium-api-key"),
+                model: premiumModel))
+        }
+        let mainKey = Keychain.loadKey()
         let chain = config.customModel.isEmpty ? config.models : [config.customModel]
-        return Translator(baseURL: config.baseURL, apiKey: Keychain.loadKey(), models: chain)
+        attempts += chain.map {
+            Translator.Attempt(baseURL: config.baseURL, apiKey: mainKey, model: $0)
+        }
+        return Translator(attempts: attempts)
     }
 
     // MARK: - lifecycle
 
     func bootstrap() {
         apiKeyDraft = Keychain.loadKey()
+        premiumKeyDraft = Keychain.loadKey(account: "premium-api-key")
         if apiKeyDraft.isEmpty || !ModelManager.isDownloaded(selectedModel) {
             phase = .setup
             status = "welcome - one-time setup"
@@ -179,6 +193,8 @@ final class AppState: ObservableObject {
     /// Settings changed: persist, and reload whatever the change touches.
     func applySettings(reloadModel: Bool) {
         Keychain.saveKey(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+        Keychain.saveKey(premiumKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                         account: "premium-api-key")
         config.save()
         if reloadModel {
             shutdown()

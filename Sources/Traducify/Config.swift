@@ -70,9 +70,14 @@ struct Config: Codable {
         "anthropic/claude-haiku-4.5",
         "google/gemini-2.5-flash-lite",
         "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemma-3-27b-it:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "google/gemma-4-31b-it:free",
     ]
     var customModel = ""         // Advanced: overrides the chain when non-empty
+
+    // premium provider: optional separate key/endpoint tried before the chain
+    var premiumBaseURL = "https://api.openai.com/v1"
+    var premiumModel = ""        // empty = premium slot off
 
     // VAD
     var thresholdDb: Float = -38.0
@@ -101,8 +106,35 @@ struct Config: Codable {
 
     static func load() -> Config {
         guard let data = try? Data(contentsOf: fileURL),
-              let cfg = try? JSONDecoder().decode(Config.self, from: data) else { return Config() }
+              var cfg = try? JSONDecoder().decode(Config.self, from: data) else { return Config() }
+        // migrate model slugs that OpenRouter has retired
+        let retired = ["google/gemma-3-27b-it:free": "google/gemma-4-31b-it:free"]
+        cfg.models = cfg.models.map { retired[$0] ?? $0 }
         return cfg
+    }
+
+    // Decode with per-field fallbacks so configs written by older versions
+    // (missing newer keys) load instead of resetting to defaults.
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Config()
+        theirLanguage = (try? c.decode(String.self, forKey: .theirLanguage)) ?? d.theirLanguage
+        myLanguage = (try? c.decode(String.self, forKey: .myLanguage)) ?? d.myLanguage
+        micEnabled = (try? c.decode(Bool.self, forKey: .micEnabled)) ?? d.micEnabled
+        whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? d.whisperModel
+        baseURL = (try? c.decode(String.self, forKey: .baseURL)) ?? d.baseURL
+        models = (try? c.decode([String].self, forKey: .models)) ?? d.models
+        customModel = (try? c.decode(String.self, forKey: .customModel)) ?? d.customModel
+        premiumBaseURL = (try? c.decode(String.self, forKey: .premiumBaseURL)) ?? d.premiumBaseURL
+        premiumModel = (try? c.decode(String.self, forKey: .premiumModel)) ?? d.premiumModel
+        thresholdDb = (try? c.decode(Float.self, forKey: .thresholdDb)) ?? d.thresholdDb
+        silenceMs = (try? c.decode(Int.self, forKey: .silenceMs)) ?? d.silenceMs
+        minSpeechMs = (try? c.decode(Int.self, forKey: .minSpeechMs)) ?? d.minSpeechMs
+        maxSegmentS = (try? c.decode(Int.self, forKey: .maxSegmentS)) ?? d.maxSegmentS
+        saveTranscripts = (try? c.decode(Bool.self, forKey: .saveTranscripts)) ?? d.saveTranscripts
+        onboarded = (try? c.decode(Bool.self, forKey: .onboarded)) ?? d.onboarded
     }
 
     func save() {

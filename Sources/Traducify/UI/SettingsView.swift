@@ -42,6 +42,14 @@ struct SettingsView: View {
                 Link("Manage keys at openrouter.ai/keys",
                      destination: URL(string: "https://openrouter.ai/keys")!)
                     .font(.caption)
+                DisclosureGroup("Premium model (optional, tried first)") {
+                    TextField("Base URL", text: $state.config.premiumBaseURL)
+                    TextField("Model (e.g. gpt-5.5)", text: $state.config.premiumModel)
+                    SecureField("API key for this provider", text: $state.premiumKeyDraft)
+                    Text("Every translation tries this first; the regular chain above is the fallback when it errors or runs out of credits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 DisclosureGroup("Advanced: bring your own provider") {
                     TextField("Base URL", text: $state.config.baseURL)
                     TextField("Model (overrides the default chain)", text: $state.config.customModel)

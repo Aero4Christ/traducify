@@ -1,11 +1,16 @@
 import Foundation
 
-/// OpenAI-compatible chat-completions client. Defaults to OpenRouter; the
-/// Advanced settings point it at any provider that speaks the same protocol.
+/// OpenAI-compatible chat-completions client. Walks a list of attempts, each
+/// with its own endpoint, key, and model: the premium slot first (if set),
+/// then the fallback chain on the main provider.
 struct Translator {
-    let baseURL: String
-    let apiKey: String
-    let models: [String]
+    struct Attempt {
+        let baseURL: String
+        let apiKey: String
+        let model: String
+    }
+
+    let attempts: [Attempt]
 
     struct Failure: Error, LocalizedError {
         let message: String
@@ -14,7 +19,7 @@ struct Translator {
 
     /// Forgiving endpoint builder: tolerates trailing slashes, a pasted
     /// /chat/completions suffix, and a bare host with no /v1 path.
-    private var endpoint: URL? {
+    static func endpoint(for baseURL: String) -> URL? {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         if base.lowercased().hasSuffix("/chat/completions") {
@@ -25,21 +30,21 @@ struct Translator {
         return URL(string: base + "/chat/completions")
     }
 
-    /// Returns (translation, model that produced it). Walks the fallback chain.
+    /// Returns (translation, model that produced it).
     func translate(_ text: String, from: String, to: String) async throws -> (String, String) {
         var lastError = "no models configured"
-        for model in models where !model.isEmpty {
+        for attempt in attempts where !attempt.model.isEmpty {
             do {
-                let result = try await request(text, from: from, to: to, model: model)
-                if !result.isEmpty { return (result, model) }
+                let result = try await request(text, from: from, to: to, attempt: attempt)
+                if !result.isEmpty { return (result, attempt.model) }
             } catch {
-                lastError = "\(model): \(error.localizedDescription)"
+                lastError = "\(attempt.model): \(error.localizedDescription)"
             }
         }
         throw Failure(message: lastError)
     }
 
-    private func request(_ text: String, from: String, to: String, model: String) async throws -> String {
+    private func request(_ text: String, from: String, to: String, attempt: Attempt) async throws -> String {
         let source = from.isEmpty ? "its original language" : Language.named(from)
         let target = Language.named(to)
         let system = """
@@ -49,17 +54,19 @@ struct Translator {
         output it unchanged.
         """
 
-        guard let endpoint else { throw Failure(message: "invalid base URL: \(baseURL)") }
+        guard let endpoint = Translator.endpoint(for: attempt.baseURL) else {
+            throw Failure(message: "invalid base URL: \(attempt.baseURL)")
+        }
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.timeoutInterval = 30
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(attempt.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("Traducify", forHTTPHeaderField: "X-Title")
         req.setValue("https://github.com/Aero4Christ/traducify", forHTTPHeaderField: "HTTP-Referer")
 
         let body: [String: Any] = [
-            "model": model,
+            "model": attempt.model,
             "max_tokens": 1024,
             "messages": [
                 ["role": "system", "content": system],
