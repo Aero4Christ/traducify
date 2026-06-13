@@ -85,6 +85,13 @@ struct Config: Codable {
     var minSpeechMs = 400
     var maxSegmentS = 12
 
+    // appearance
+    var panelBgHex = "#0B0B12"      // near-black with a faint blue cast
+    var panelTextHex = "#FFFFFF"
+    var accentHex = "#34C759"       // system green
+    var panelOpacity = 0.94
+    var fontScale = 1.0             // 0.8 - 1.6
+
     // misc
     var saveTranscripts = true
     var onboarded = false
@@ -129,6 +136,11 @@ struct Config: Codable {
         customModel = (try? c.decode(String.self, forKey: .customModel)) ?? d.customModel
         premiumBaseURL = (try? c.decode(String.self, forKey: .premiumBaseURL)) ?? d.premiumBaseURL
         premiumModel = (try? c.decode(String.self, forKey: .premiumModel)) ?? d.premiumModel
+        panelBgHex = (try? c.decode(String.self, forKey: .panelBgHex)) ?? d.panelBgHex
+        panelTextHex = (try? c.decode(String.self, forKey: .panelTextHex)) ?? d.panelTextHex
+        accentHex = (try? c.decode(String.self, forKey: .accentHex)) ?? d.accentHex
+        panelOpacity = (try? c.decode(Double.self, forKey: .panelOpacity)) ?? d.panelOpacity
+        fontScale = (try? c.decode(Double.self, forKey: .fontScale)) ?? d.fontScale
         thresholdDb = (try? c.decode(Float.self, forKey: .thresholdDb)) ?? d.thresholdDb
         silenceMs = (try? c.decode(Int.self, forKey: .silenceMs)) ?? d.silenceMs
         minSpeechMs = (try? c.decode(Int.self, forKey: .minSpeechMs)) ?? d.minSpeechMs

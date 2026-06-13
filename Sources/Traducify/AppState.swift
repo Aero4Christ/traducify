@@ -12,8 +12,8 @@ struct TranslationLine: Identifiable, Equatable {
     let id = UUID()
     let speaker: Speaker
     let original: String
-    let translation: String
-    let model: String
+    var translation: String       // filled token-by-token while streaming
+    var model: String
     let date = Date()
 }
 
@@ -34,9 +34,16 @@ final class AppState: ObservableObject {
     @Published var downloadProgress = 0.0
     @Published var collapsed = false
     @Published var showChat = false
+    @Published var paused = false
     @Published var config = Config.load()
     @Published var apiKeyDraft = ""
     @Published var premiumKeyDraft = ""
+
+    // settings helpers
+    @Published var mainModelOptions: [String] = []
+    @Published var premiumModelOptions: [String] = []
+    @Published var loadingModels = false
+    @Published var testResult: String?   // nil = idle
 
     var onOpenSettings: (() -> Void)?
 
@@ -216,8 +223,8 @@ final class AppState: ObservableObject {
     nonisolated private func handleSegment(channel: Segmenter.Channel, audio: [Float]) {
         sttQueue.async { [weak self] in
             guard let self else { return }
-            let (whisper, cfg) = DispatchQueue.main.sync { (self.whisper, self.config) }
-            guard let whisper else { return }
+            let (whisper, cfg, paused) = DispatchQueue.main.sync { (self.whisper, self.config, self.paused) }
+            guard let whisper, !paused else { return }
 
             let hint = channel == .system ? cfg.theirLanguage : cfg.myLanguage
             let text = whisper.transcribe(audio, language: hint)
@@ -235,21 +242,37 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Publish the transcription immediately, then stream the translation into
+    /// that same line. Falls back to a single non-streaming replace on failure.
     private func translateAndPublish(speaker: TranslationLine.Speaker, text: String,
                                      from: String, to: String) {
         let translator = self.translator
+        let line = TranslationLine(speaker: speaker, original: text, translation: "", model: "")
+        let id = line.id
+        lines.append(line)
+        if lines.count > 100 { lines.removeFirst(lines.count - 100) }
+
+        func update(_ mutate: (inout TranslationLine) -> Void) {
+            if let i = lines.firstIndex(where: { $0.id == id }) { mutate(&lines[i]) }
+        }
+
         Task {
             do {
-                let (translation, model) = try await translator.translate(text, from: from, to: to)
-                let line = TranslationLine(speaker: speaker, original: text,
-                                           translation: translation, model: model)
-                await MainActor.run {
-                    self.lines.append(line)
-                    if self.lines.count > 100 { self.lines.removeFirst(self.lines.count - 100) }
+                let (full, model) = try await translator.translateStreaming(text, from: from, to: to) { delta in
+                    update { $0.translation += delta }
                 }
-                self.transcript?.log(speaker: speaker.rawValue, original: text, translation: translation)
+                update { $0.translation = full; $0.model = model }
+                transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
             } catch {
-                await MainActor.run { self.status = "translation failed: \(error.localizedDescription)" }
+                // streaming did not start anywhere; try the plain chain once
+                do {
+                    let (full, model) = try await translator.translate(text, from: from, to: to)
+                    update { $0.translation = full; $0.model = model }
+                    transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
+                } catch {
+                    update { $0.translation = "" }
+                    status = "translation failed: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -259,17 +282,68 @@ final class AppState: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let translator = self.translator
-        let (from, to) = (config.myLanguage, config.theirLanguage)
-        let target = to.isEmpty ? "es" : to  // auto-detect has no target; fall back
+        let from = config.myLanguage
+        let target = config.theirLanguage.isEmpty ? "es" : config.theirLanguage
+        chatResult = TranslationLine(speaker: .chat, original: trimmed, translation: "", model: "")
+
         Task {
             do {
-                let (translation, model) = try await translator.translate(trimmed, from: from, to: target)
-                let line = TranslationLine(speaker: .chat, original: trimmed,
-                                           translation: translation, model: model)
-                await MainActor.run { self.chatResult = line }
-                self.transcript?.log(speaker: "CHAT", original: trimmed, translation: translation)
+                let (full, model) = try await translator.translateStreaming(trimmed, from: from, to: target) { delta in
+                    self.chatResult?.translation += delta
+                }
+                chatResult?.translation = full
+                chatResult?.model = model
+                transcript?.log(speaker: "CHAT", original: trimmed, translation: full)
             } catch {
-                await MainActor.run { self.status = "translation failed: \(error.localizedDescription)" }
+                do {
+                    let (full, model) = try await translator.translate(trimmed, from: from, to: target)
+                    chatResult?.translation = full
+                    chatResult?.model = model
+                    transcript?.log(speaker: "CHAT", original: trimmed, translation: full)
+                } catch {
+                    status = "translation failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func togglePause() {
+        paused.toggle()
+        if phase == .running {
+            status = paused ? "paused" : (config.micEnabled ? "listening to system audio + mic"
+                                                            : "listening to system audio")
+        }
+    }
+
+    // MARK: - settings helpers
+
+    func loadModels(premium: Bool) {
+        loadingModels = true
+        let baseURL = premium ? config.premiumBaseURL : config.baseURL
+        let key = Keychain.loadKey(account: premium ? "premium-api-key" : "api-key")
+        let draftKey = premium ? premiumKeyDraft : apiKeyDraft   // honor what's typed but unsaved
+        Task {
+            let models = await Translator.availableModels(
+                baseURL: baseURL, apiKey: draftKey.isEmpty ? key : draftKey)
+            if premium { premiumModelOptions = models } else { mainModelOptions = models }
+            loadingModels = false
+        }
+    }
+
+    func testConnection() {
+        Keychain.saveKey(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+        Keychain.saveKey(premiumKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                         account: "premium-api-key")
+        testResult = "testing…"
+        let translator = self.translator
+        let to = config.theirLanguage.isEmpty ? "es" : config.theirLanguage
+        Task {
+            do {
+                let (text, model) = try await translator.translate(
+                    "Hello, this is a connection test.", from: config.myLanguage, to: to)
+                testResult = "Works via \(model): \"\(text)\""
+            } catch {
+                testResult = "Failed: \(error.localizedDescription)"
             }
         }
     }
