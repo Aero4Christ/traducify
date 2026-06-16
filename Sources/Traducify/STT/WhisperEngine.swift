@@ -25,7 +25,8 @@ final class WhisperEngine: @unchecked Sendable {  // used serially from sttQueue
     deinit { whisper_free(ctx) }
 
     /// Transcribe 16 kHz mono samples. `language` is a whisper code, "" = auto-detect.
-    func transcribe(_ samples: [Float], language: String) -> String {
+    /// `prompt` is recent same-language text fed as initial_prompt for continuity.
+    func transcribe(_ samples: [Float], language: String, prompt: String = "") -> String {
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.n_threads = Int32(max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
         params.print_progress = false
@@ -56,13 +57,16 @@ final class WhisperEngine: @unchecked Sendable {  // used serially from sttQueue
                 whisper_full(self.ctx, params, buf.baseAddress, Int32(buf.count))
             }
         }
-        let status: Int32
-        if language.isEmpty {
-            params.language = nil
-            status = run()
-        } else {
-            status = language.withCString { lang in
-                params.language = lang
+        // language and initial_prompt are C strings that must outlive the
+        // whisper_full call; bind both (nil when empty) before running.
+        func withOptionalCString<R>(_ s: String, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+            if s.isEmpty { return body(nil) }
+            return s.withCString { body($0) }
+        }
+        let status = withOptionalCString(language) { lang in
+            params.language = lang
+            return withOptionalCString(prompt) { pr in
+                params.initial_prompt = pr
                 return run()
             }
         }
