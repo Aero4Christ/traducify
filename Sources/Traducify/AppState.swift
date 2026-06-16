@@ -23,19 +23,21 @@ struct TranslationLine: Identifiable, Equatable {
 private final class PipelineSnapshot: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: WhisperEngine?
+    private var vad: VadEngine?
     private var theirLang = ""
     private var myLang = ""
     private var paused = false
 
     func setEngine(_ e: WhisperEngine?) { lock.lock(); engine = e; lock.unlock() }
+    func setVad(_ v: VadEngine?) { lock.lock(); vad = v; lock.unlock() }
     func setPaused(_ p: Bool) { lock.lock(); paused = p; lock.unlock() }
     func setLanguages(their: String, my: String) {
         lock.lock(); theirLang = their; myLang = my; lock.unlock()
     }
 
-    func read() -> (engine: WhisperEngine?, their: String, my: String, paused: Bool) {
+    func read() -> (engine: WhisperEngine?, vad: VadEngine?, their: String, my: String, paused: Bool) {
         lock.lock(); defer { lock.unlock() }
-        return (engine, theirLang, myLang, paused)
+        return (engine, vad, theirLang, myLang, paused)
     }
 }
 
@@ -197,6 +199,11 @@ final class AppState: ObservableObject {
             do {
                 let engine = try await Task.detached { try WhisperEngine(modelPath: modelPath) }.value
                 self?.sttState.setEngine(engine)
+                // Best-effort Silero VAD. Missing model (e.g. a plain `swift
+                // build` with no app bundle) falls back to energy-only.
+                if let vadPath = Bundle.main.path(forResource: "ggml-silero-v5.1.2", ofType: "bin") {
+                    self?.sttState.setVad(try? VadEngine(modelPath: vadPath))
+                }
                 self?.sttState.setLanguages(their: cfg.theirLanguage, my: cfg.myLanguage)
                 self?.sttState.setPaused(self?.paused ?? false)
                 self?.startCaptures(cfg)
@@ -280,6 +287,7 @@ final class AppState: ObservableObject {
         if reloadModel {
             shutdown()
             sttState.setEngine(nil)
+            sttState.setVad(nil)
             context.reset()
             bootstrap()
         }
@@ -298,8 +306,10 @@ final class AppState: ObservableObject {
     nonisolated private func handleSegment(channel: Segmenter.Channel, audio: [Float]) {
         sttQueue.async { [weak self] in
             guard let self else { return }
-            let (engine, theirLang, myLang, paused) = self.sttState.read()
+            let (engine, vad, theirLang, myLang, paused) = self.sttState.read()
             guard let engine, !paused else { return }
+            // Silero confirms this candidate is speech, not music/noise/room tone.
+            if let vad, !vad.isSpeech(audio) { return }
 
             let hint = channel == .system ? theirLang : myLang
             let text = engine.transcribe(audio, language: hint, prompt: self.context.tail(for: channel))

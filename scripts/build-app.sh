@@ -19,6 +19,10 @@ cp -R "$WHISPER_FRAMEWORK" "$APP/Contents/Frameworks/"
 if [ -f Bundle/AppIcon.icns ]; then
   cp Bundle/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
+# Silero VAD model (small; bundled so VAD works offline with no download)
+if [ -f Bundle/ggml-silero-v5.1.2.bin ]; then
+  cp Bundle/ggml-silero-v5.1.2.bin "$APP/Contents/Resources/ggml-silero-v5.1.2.bin"
+fi
 
 # the binary references @rpath/whisper.framework; point rpath at the bundle
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Traducify" 2>/dev/null || true
