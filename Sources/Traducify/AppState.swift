@@ -17,6 +17,28 @@ struct TranslationLine: Identifiable, Equatable {
     let date = Date()
 }
 
+/// Thread-safe handoff of the few values the STT queue needs each segment, so
+/// the audio path never blocks on (or deadlocks against) the main thread to
+/// read them. Written from main when they change; read from the STT queue.
+private final class PipelineSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var engine: WhisperEngine?
+    private var theirLang = ""
+    private var myLang = ""
+    private var paused = false
+
+    func setEngine(_ e: WhisperEngine?) { lock.lock(); engine = e; lock.unlock() }
+    func setPaused(_ p: Bool) { lock.lock(); paused = p; lock.unlock() }
+    func setLanguages(their: String, my: String) {
+        lock.lock(); theirLang = their; myLang = my; lock.unlock()
+    }
+
+    func read() -> (engine: WhisperEngine?, their: String, my: String, paused: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        return (engine, theirLang, myLang, paused)
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     enum Phase: Equatable {
@@ -35,7 +57,11 @@ final class AppState: ObservableObject {
     @Published var collapsed = false
     @Published var showChat = false
     @Published var paused = false
-    @Published var config = Config.load()
+    @Published var config = Config.load() {
+        // keep the STT-queue snapshot's languages in sync with live edits
+        // (the Settings pickers bind straight to config, no apply step)
+        didSet { sttState.setLanguages(their: config.theirLanguage, my: config.myLanguage) }
+    }
     @Published var apiKeyDraft = ""
     @Published var premiumKeyDraft = ""
 
@@ -47,12 +73,16 @@ final class AppState: ObservableObject {
 
     var onOpenSettings: (() -> Void)?
 
-    private var whisper: WhisperEngine?
     private var systemCapture: SystemAudioCapture?
     private var micCapture: MicCapture?
     private var transcript: Transcript?
     private let modelManager = ModelManager()
     private let sttQueue = DispatchQueue(label: "traducify.stt", qos: .userInitiated)
+
+    // Phase 3: the values the STT queue needs each segment, mirrored into a
+    // thread-safe box so the audio path never blocks on the main thread to read
+    // them (the old DispatchQueue.main.sync was a stall and a deadlock risk).
+    private let sttState = PipelineSnapshot()
 
     // Phase 2 (main-isolated): suppress a back-to-back duplicate segment, and
     // reuse a translation already produced this session instead of paying for
@@ -131,7 +161,9 @@ final class AppState: ObservableObject {
         Task { [weak self] in
             do {
                 let engine = try await Task.detached { try WhisperEngine(modelPath: modelPath) }.value
-                self?.whisper = engine
+                self?.sttState.setEngine(engine)
+                self?.sttState.setLanguages(their: cfg.theirLanguage, my: cfg.myLanguage)
+                self?.sttState.setPaused(self?.paused ?? false)
                 self?.startCaptures(cfg)
             } catch {
                 self?.phase = .failed(error.localizedDescription)
@@ -212,7 +244,7 @@ final class AppState: ObservableObject {
         config.save()
         if reloadModel {
             shutdown()
-            whisper = nil
+            sttState.setEngine(nil)
             bootstrap()
         }
     }
@@ -230,15 +262,15 @@ final class AppState: ObservableObject {
     nonisolated private func handleSegment(channel: Segmenter.Channel, audio: [Float]) {
         sttQueue.async { [weak self] in
             guard let self else { return }
-            let (whisper, cfg, paused) = DispatchQueue.main.sync { (self.whisper, self.config, self.paused) }
-            guard let whisper, !paused else { return }
+            let (engine, theirLang, myLang, paused) = self.sttState.read()
+            guard let engine, !paused else { return }
 
-            let hint = channel == .system ? cfg.theirLanguage : cfg.myLanguage
-            let text = whisper.transcribe(audio, language: hint)
+            let hint = channel == .system ? theirLang : myLang
+            let text = engine.transcribe(audio, language: hint)
             guard !text.isEmpty else { return }
 
-            let from = hint.isEmpty ? whisper.detectedLanguage() : hint
-            let to = channel == .system ? cfg.myLanguage : cfg.theirLanguage
+            let from = hint.isEmpty ? engine.detectedLanguage() : hint
+            let to = channel == .system ? myLang : theirLang
             guard from != to else { return }
 
             Task { @MainActor in
@@ -350,6 +382,7 @@ final class AppState: ObservableObject {
 
     func togglePause() {
         paused.toggle()
+        sttState.setPaused(paused)
         if phase == .running {
             status = paused ? "paused" : (config.micEnabled ? "listening to system audio + mic"
                                                             : "listening to system audio")
