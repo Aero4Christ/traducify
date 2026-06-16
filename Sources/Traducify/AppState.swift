@@ -54,6 +54,13 @@ final class AppState: ObservableObject {
     private let modelManager = ModelManager()
     private let sttQueue = DispatchQueue(label: "traducify.stt", qos: .userInitiated)
 
+    // Phase 2 (main-isolated): suppress a back-to-back duplicate segment, and
+    // reuse a translation already produced this session instead of paying for
+    // it again. Touched only from translateAndPublish, which runs on main.
+    private static let dedupWindow: TimeInterval = 3
+    private var lastSegment: [TranslationLine.Speaker: (key: String, at: Date)] = [:]
+    private var translationCache: [String: (text: String, model: String)] = [:]
+
     private var selectedModel: WhisperModel {
         WhisperModel.all.first { $0.file == config.whisperModel } ?? WhisperModel.all[0]
     }
@@ -242,10 +249,42 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func normalizedKey(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func cacheStore(_ key: String, text: String, model: String) {
+        translationCache[key] = (text, model)
+        if translationCache.count > 200 { translationCache.removeAll() }  // session cache, not a store
+    }
+
     /// Publish the transcription immediately, then stream the translation into
     /// that same line. Falls back to a single non-streaming replace on failure.
     private func translateAndPublish(speaker: TranslationLine.Speaker, text: String,
                                      from: String, to: String) {
+        // Drop a segment that repeats the previous one verbatim back to back (a
+        // whisper artifact, not a real second utterance). A genuine repeat later
+        // still shows; the cache below makes it free.
+        let key = normalizedKey(text)
+        let now = Date()
+        if let last = lastSegment[speaker], last.key == key,
+           now.timeIntervalSince(last.at) < Self.dedupWindow {
+            return
+        }
+        lastSegment[speaker] = (key, now)
+
+        // Identical phrase already translated this session: reuse it instantly,
+        // no API call, no double billing.
+        let cacheKey = "\(from)>\(to)>\(key)"
+        if let hit = translationCache[cacheKey] {
+            let line = TranslationLine(speaker: speaker, original: text,
+                                       translation: hit.text, model: hit.model)
+            lines.append(line)
+            if lines.count > 100 { lines.removeFirst(lines.count - 100) }
+            transcript?.log(speaker: speaker.rawValue, original: text, translation: hit.text)
+            return
+        }
+
         let translator = self.translator
         let line = TranslationLine(speaker: speaker, original: text, translation: "", model: "")
         let id = line.id
@@ -262,12 +301,14 @@ final class AppState: ObservableObject {
                     update { $0.translation += delta }
                 }
                 update { $0.translation = full; $0.model = model }
+                cacheStore(cacheKey, text: full, model: model)
                 transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
             } catch {
                 // streaming did not start anywhere; try the plain chain once
                 do {
                     let (full, model) = try await translator.translate(text, from: from, to: to)
                     update { $0.translation = full; $0.model = model }
+                    cacheStore(cacheKey, text: full, model: model)
                     transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
                 } catch {
                     update { $0.translation = "" }
