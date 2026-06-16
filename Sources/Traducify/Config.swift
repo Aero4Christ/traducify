@@ -66,12 +66,16 @@ struct Config: Codable {
 
     // provider (OpenAI-compatible)
     var baseURL = "https://openrouter.ai/api/v1"
+    // Free-only chain: every entry costs $0, so it works on a no-credit /
+    // $0-limit key. OpenRouter throttles the shared free pool (429s come and
+    // go), so we list several; the first that answers wins. Paid models do
+    // NOT belong here; put those in the premium slot below.
     var models = [
-        "anthropic/claude-haiku-4.5",
-        "google/gemini-2.5-flash-lite",
-        "meta-llama/llama-3.3-70b-instruct:free",
         "qwen/qwen3-next-80b-a3b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
         "google/gemma-4-31b-it:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemma-4-26b-a4b-it:free",
     ]
     var customModel = ""         // Advanced: overrides the chain when non-empty
 

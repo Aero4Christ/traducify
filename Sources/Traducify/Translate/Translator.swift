@@ -45,8 +45,13 @@ struct Translator {
         case 0: throw Failure(message: "no models configured")
         case 1: throw Failure(message: failures[0])
         default:
-            // the first failure is usually the actionable one (key/credits);
-            // the last is just where the chain ran out
+            // When every attempt is a 429, it's the shared free pool being
+            // throttled, not a real misconfiguration, so say so plainly.
+            if failures.allSatisfy({ $0.contains("HTTP 429") || $0.contains("Provider returned error") }) {
+                throw Failure(message: "free models are busy right now (rate-limited). Try again in a few seconds.")
+            }
+            // otherwise the first failure is usually the actionable one
+            // (key/credits); the last is just where the chain ran out
             throw Failure(message: "all \(failures.count) models failed. First: \(failures.first!)")
         }
     }
