@@ -39,6 +39,28 @@ private final class PipelineSnapshot: @unchecked Sendable {
     }
 }
 
+/// Rolling tail of recent source-language transcripts per channel, fed back to
+/// whisper as initial_prompt so names and terminology carry across segments.
+/// Touched on the serial STT queue; the lock guards the model-reload reset.
+private final class TranscriptContext: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tails: [Segmenter.Channel: String] = [:]
+    private let maxChars = 200  // a sentence or two; whisper truncates the rest
+
+    func tail(for ch: Segmenter.Channel) -> String {
+        lock.lock(); defer { lock.unlock() }
+        return tails[ch] ?? ""
+    }
+
+    func append(_ text: String, for ch: Segmenter.Channel) {
+        lock.lock(); defer { lock.unlock() }
+        let joined = tails[ch].map { $0.isEmpty ? text : $0 + " " + text } ?? text
+        tails[ch] = joined.count > maxChars ? String(joined.suffix(maxChars)) : joined
+    }
+
+    func reset() { lock.lock(); tails.removeAll(); lock.unlock() }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     enum Phase: Equatable {
@@ -60,7 +82,13 @@ final class AppState: ObservableObject {
     @Published var config = Config.load() {
         // keep the STT-queue snapshot's languages in sync with live edits
         // (the Settings pickers bind straight to config, no apply step)
-        didSet { sttState.setLanguages(their: config.theirLanguage, my: config.myLanguage) }
+        didSet {
+            sttState.setLanguages(their: config.theirLanguage, my: config.myLanguage)
+            if oldValue.theirLanguage != config.theirLanguage
+                || oldValue.myLanguage != config.myLanguage {
+                context.reset()  // a stale tail would be the wrong language
+            }
+        }
     }
     @Published var apiKeyDraft = ""
     @Published var premiumKeyDraft = ""
@@ -84,12 +112,19 @@ final class AppState: ObservableObject {
     // them (the old DispatchQueue.main.sync was a stall and a deadlock risk).
     private let sttState = PipelineSnapshot()
 
+    // Phase 5: rolling per-channel transcript tail fed back to whisper as
+    // initial_prompt so names and terminology carry across segments.
+    private let context = TranscriptContext()
+
     // Phase 2 (main-isolated): suppress a back-to-back duplicate segment, and
     // reuse a translation already produced this session instead of paying for
     // it again. Touched only from translateAndPublish, which runs on main.
     private static let dedupWindow: TimeInterval = 3
     private var lastSegment: [TranslationLine.Speaker: (key: String, at: Date)] = [:]
     private var translationCache: [String: (text: String, model: String)] = [:]
+    // Phase 5: last completed exchange per speaker, handed to the translator as
+    // context so consecutive lines stay consistent.
+    private var lastExchange: [TranslationLine.Speaker: (original: String, translation: String)] = [:]
 
     private var selectedModel: WhisperModel {
         WhisperModel.all.first { $0.file == config.whisperModel } ?? WhisperModel.all[0]
@@ -245,6 +280,7 @@ final class AppState: ObservableObject {
         if reloadModel {
             shutdown()
             sttState.setEngine(nil)
+            context.reset()
             bootstrap()
         }
     }
@@ -266,8 +302,9 @@ final class AppState: ObservableObject {
             guard let engine, !paused else { return }
 
             let hint = channel == .system ? theirLang : myLang
-            let text = engine.transcribe(audio, language: hint)
+            let text = engine.transcribe(audio, language: hint, prompt: self.context.tail(for: channel))
             guard !text.isEmpty else { return }
+            self.context.append(text, for: channel)
 
             let from = hint.isEmpty ? engine.detectedLanguage() : hint
             let to = channel == .system ? myLang : theirLang
@@ -313,10 +350,13 @@ final class AppState: ObservableObject {
                                        translation: hit.text, model: hit.model)
             lines.append(line)
             if lines.count > 100 { lines.removeFirst(lines.count - 100) }
+            lastExchange[speaker] = (original: text, translation: hit.text)
             transcript?.log(speaker: speaker.rawValue, original: text, translation: hit.text)
             return
         }
 
+        // Hand the translator the previous line of this speaker for consistency.
+        let priorContext = lastExchange[speaker].map { [$0] } ?? []
         let translator = self.translator
         let line = TranslationLine(speaker: speaker, original: text, translation: "", model: "")
         let id = line.id
@@ -329,17 +369,19 @@ final class AppState: ObservableObject {
 
         Task {
             do {
-                let (full, model) = try await translator.translateStreaming(text, from: from, to: to) { delta in
+                let (full, model) = try await translator.translateStreaming(text, from: from, to: to, context: priorContext) { delta in
                     update { $0.translation += delta }
                 }
                 update { $0.translation = full; $0.model = model }
+                lastExchange[speaker] = (original: text, translation: full)
                 cacheStore(cacheKey, text: full, model: model)
                 transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
             } catch {
                 // streaming did not start anywhere; try the plain chain once
                 do {
-                    let (full, model) = try await translator.translate(text, from: from, to: to)
+                    let (full, model) = try await translator.translate(text, from: from, to: to, context: priorContext)
                     update { $0.translation = full; $0.model = model }
+                    lastExchange[speaker] = (original: text, translation: full)
                     cacheStore(cacheKey, text: full, model: model)
                     transcript?.log(speaker: speaker.rawValue, original: text, translation: full)
                 } catch {
