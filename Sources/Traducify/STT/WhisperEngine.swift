@@ -36,6 +36,21 @@ final class WhisperEngine: @unchecked Sendable {  // used serially from sttQueue
         params.suppress_blank = true
         params.translate = false
 
+        // Each VAD chunk is one utterance: keep it a single segment so whisper
+        // does not invent a phantom trailing segment on the closing silence.
+        params.single_segment = true
+        // Suppress non-speech tokens ("[music]", "(applause)") at the source.
+        params.suppress_nst = true
+        // Anti-hallucination gates, pinned to the library defaults so they are
+        // visible and tunable and survive any upstream default change. A greedy
+        // decode that trips these retries at a higher temperature; if it still
+        // fails, the segment is dropped instead of emitted as garbage.
+        params.temperature = 0.0
+        params.temperature_inc = 0.2
+        params.entropy_thold = 2.4    // catches repetition loops
+        params.logprob_thold = -1.0   // drops low-confidence decodes
+        params.no_speech_thold = 0.6  // drops non-speech / silence
+
         let run: () -> Int32 = {
             samples.withUnsafeBufferPointer { buf in
                 whisper_full(self.ctx, params, buf.baseAddress, Int32(buf.count))
