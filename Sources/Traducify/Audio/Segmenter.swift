@@ -52,7 +52,10 @@ final class Segmenter {
 
     private func process(_ frame: [Float]) {
         let db = Segmenter.dbfs(frame)
-        let gate = max(thresholdDb, noiseFloorDb + 8.0)
+        // 6 dB over the noise floor (was 8): a touch more sensitive so quiet
+        // speech still forms a candidate. Silero VAD downstream drops whatever
+        // noise this lets through, so erring toward inclusion is cheap.
+        let gate = max(thresholdDb, noiseFloorDb + 6.0)
 
         if !inSpeech {
             // slow EMA of the noise floor while idle
