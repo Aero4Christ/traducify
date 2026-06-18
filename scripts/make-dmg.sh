@@ -10,6 +10,7 @@ trap 'rm -rf "$STAGE"' EXIT
 [ -d dist/Traducify.app ] || ./scripts/build-app.sh
 
 cp -R dist/Traducify.app "$STAGE/"
+xattr -cr "$STAGE/Traducify.app"   # strip iCloud FinderInfo so the shipped app verifies clean
 ln -s /Applications "$STAGE/Applications"
 
 mkdir -p dist
