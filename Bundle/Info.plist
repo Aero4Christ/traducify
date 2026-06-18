@@ -2,33 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>Traducify</string>
-    <key>CFBundleDisplayName</key>
-    <string>Traducify</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.aero4christ.traducify</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>CFBundleExecutable</key>
-    <string>Traducify</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Traducify listens to your microphone so it can translate what you say for the other side of the conversation.</string>
-    <key>NSAudioCaptureUsageDescription</key>
-    <string>Traducify captures system audio so it can translate what is playing on your Mac.</string>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>macOS bundles system-audio capture under screen recording. Traducify only uses the audio; it never reads your screen.</string>
+	<key>CFBundleDisplayName</key>
+	<string>Traducify</string>
+	<key>CFBundleExecutable</key>
+	<string>Traducify</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.aero4christ.traducify</string>
+	<key>CFBundleName</key>
+	<string>Traducify</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Traducify captures system audio so it can translate what is playing on your Mac.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Traducify listens to your microphone so it can translate what you say for the other side of the conversation.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>macOS bundles system-audio capture under screen recording. Traducify only uses the audio; it never reads your screen.</string>
 </dict>
 </plist>

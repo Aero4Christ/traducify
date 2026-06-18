@@ -27,9 +27,18 @@ fi
 # the binary references @rpath/whisper.framework; point rpath at the bundle
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Traducify" 2>/dev/null || true
 
-# ad-hoc signature so TCC permissions stick to the bundle
+# Sign with a stable self-signed identity so TCC grants (Screen & System Audio
+# Recording) persist across rebuilds: ad-hoc gives a new cdhash every build, which
+# is what forces a re-grant each time. Falls back to ad-hoc where the identity is
+# not installed (other machines, CI). Create it once with scripts/make-signing-cert.sh.
+SIGN_ID="${SIGN_ID:-Traducify Self-Signed}"
+security find-certificate -c "$SIGN_ID" >/dev/null 2>&1 || SIGN_ID="-"
+# Clear extended attributes right before EACH codesign: in an iCloud-synced
+# folder the File Provider re-adds com.apple.FinderInfo, which trips codesign's
+# "detritus not allowed" check if cleared only once up front.
+xattr -cr "$APP/Contents/Frameworks/whisper.framework"
+codesign --force --sign "$SIGN_ID" "$APP/Contents/Frameworks/whisper.framework"
 xattr -cr "$APP"
-codesign --force --sign - "$APP/Contents/Frameworks/whisper.framework"
-codesign --force --sign - "$APP"
+codesign --force --sign "$SIGN_ID" "$APP"
 
-echo "Built $APP"
+echo "Built $APP (signed: $SIGN_ID)"
