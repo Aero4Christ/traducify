@@ -2,3 +2,7 @@
 dist/
 .DS_Store
 *.dmg
+# Built app bundle: install from dist/ to /Applications, never commit it.
+# A committed ad-hoc copy gets registered under the same bundle id and
+# forces a Screen Recording re-grant on every launch.
+/Traducify.app/
